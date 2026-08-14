@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#101010">
+  <meta name="description" content="A private, API-first AI chat client.">
+  <title>Synesis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&icon_names=travel_explore">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav id="sidebar" aria-label="Conversations">
+    <div class="side-head">
+      <div class="brand"><span class="brand-mark">S</span><span>Synesis</span></div>
+      <button class="icon-btn" id="collapseBtn" title="Close sidebar" aria-label="Close sidebar">←</button>
+    </div>
+    <button class="new-chat" id="newChat"><span class="plus">+</span> New chat</button>
+    <div id="convList"></div>
+    <div class="side-foot">
+      <button class="side-link" id="openSettings"><span class="side-link-icon">⌘</span> Settings</button>
+      <div class="privacy-note"><span class="status-dot"></span> Local-first workspace</div>
+    </div>
+  </nav>
+  <div id="sideBackdrop"></div>
+
+  <main id="main" class="welcome">
+    <header id="topbar">
+      <button class="icon-btn" id="menuBtn" title="Open menu" aria-label="Open menu">☰</button>
+      <div class="topbar-title">
+        <span id="convTitle">New chat</span>
+        <span class="secure-label"><span class="secure-dot"></span> private</span>
+      </div>
+      <span id="modelBadge">no model</span>
+    </header>
+
+    <div id="conversationArea">
+      <div id="chatScroll"><div class="chat-wrap" id="messages"></div></div>
+      <div id="composerBar">
+        <div class="composer">
+          <textarea id="input" rows="1" placeholder="Message Synesis…" aria-label="Message"></textarea>
+          <div class="composer-meta">
+            <label class="reasoning-control" for="reasoningEffort"><span>Reasoning</span><select id="reasoningEffort" aria-label="Reasoning effort"><option value="none">None</option><option value="minimal">Minimal</option><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="xhigh">XHigh</option></select></label>
+            <button class="web-search-toggle" id="webSearchToggle" title="Toggle web search" aria-label="Toggle web search" aria-pressed="false"><span class="material-symbols-outlined">travel_explore</span><span class="search-label">Search</span></button>
+            <button id="sendBtn" title="Send message" aria-label="Send message">↑</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div id="menu" role="menu">
+    <button data-action="rename" role="menuitem">Rename</button>
+    <button data-action="delete" class="danger" role="menuitem">Delete</button>
+  </div>
+
+  <div id="settingsBackdrop"></div>
+  <section id="settings" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="set-head"><div><span class="eyebrow">Workspace</span><h2 id="settingsTitle">Settings</h2></div><button class="icon-btn" id="closeSettings" title="Close settings" aria-label="Close settings">×</button></div>
+    <div class="set-body">
+      <div class="set-tabs" role="tablist" aria-label="Settings sections">
+        <button class="set-tab active" data-tab="api" role="tab">API access</button>
+        <button class="set-tab" data-tab="model" role="tab">Model</button>
+        <button class="set-tab" data-tab="advanced" role="tab">Advanced</button>
+        <button class="set-tab" data-tab="data" role="tab">Data</button>
+      </div>
+      <div class="set-panels">
+        <section class="set-panel active" data-panel="api" role="tabpanel">
+          <div class="panel-intro"><span class="panel-kicker">01 / API access</span><h3>Connect your endpoint</h3><p>Use any OpenAI-compatible API. Credentials stay in this browser.</p></div>
+          <div class="field"><label for="setBaseUrl">Base URL</label><input id="setBaseUrl" type="url" placeholder="https://openrouter.ai/api/v1" autocomplete="off"><div class="hint">Leave empty to use OpenRouter.</div></div>
+          <div class="field"><label for="setApiKey">API key</label><div class="row"><input id="setApiKey" type="password" placeholder="sk-…" autocomplete="off"><button class="btn" id="toggleKey">Show</button></div><div class="hint">Sent only to your configured endpoint.</div></div>
+        </section>
+        <section class="set-panel" data-panel="model" role="tabpanel">
+          <div class="panel-intro"><span class="panel-kicker">02 / Model</span><h3>Shape the conversation</h3><p>Choose a default model and give it a consistent point of view.</p></div>
+          <div class="field"><label for="setModel">Default model</label><div class="row"><select id="setModel"><option value="">Fetch models first</option></select><button class="btn" id="fetchModels">Refresh</button></div><div class="status" id="modelStatus" aria-live="polite"></div></div>
+          <div class="field"><label for="setProvider">Provider</label><select id="setProvider" disabled><option value="">Auto</option></select><div class="hint">Auto lets OpenRouter choose. Select a healthy endpoint to pin requests to that provider.</div><div class="status" id="providerStatus" aria-live="polite"></div></div>
+          <div class="field"><label for="setSystemPrompt">System prompt</label><textarea id="setSystemPrompt" rows="5" placeholder="You are a concise, thoughtful assistant…"></textarea><div class="hint">Applied at the start of every request. It is not shown in chat history.</div></div>
+        </section>
+        <section class="set-panel" data-panel="advanced" role="tabpanel">
+          <div class="panel-intro"><span class="panel-kicker">03 / Advanced</span><h3>Reasoning &amp; tools</h3><p>Control whether hidden model state is reused in later turns, and customize request tools.</p></div>
+          <div class="field"><label class="check-row" for="setPreserveReasoning"><input id="setPreserveReasoning" type="checkbox"><span><strong>Send prior reasoning back</strong><small>Includes stored reasoning details in later requests. This can improve continuity, but uses more context and is usually only necessary when continuing tool calls.</small></span></label></div>
+          <div class="field"><label for="setTools">Tools</label><textarea id="setTools" rows="4" spellcheck="false" aria-describedby="setToolsHint"></textarea><div class="hint" id="setToolsHint">JSON sent in the request <code>tools</code> field when search is toggled on. <a href="#" id="resetTools">Reset to default</a>.</div></div>
+        </section>
+        <section class="set-panel" data-panel="data" role="tabpanel">
+          <div class="panel-intro"><span class="panel-kicker">04 / Data</span><h3>Keep control of your data</h3><p>Conversations live in IndexedDB on this device. Export a backup when needed.</p></div>
+          <div class="field"><label>Backup</label><div class="row"><button class="btn" id="exportBtn">Export everything</button><button class="btn" id="importBtn">Import</button><input type="file" id="importFile" accept="application/json" hidden></div><div class="hint">Backups include chats and settings, including your API key.</div></div>
+          <div class="field danger-field"><label>Danger zone</label><button class="btn danger" id="wipeBtn">Delete all conversations</button></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/marked.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
