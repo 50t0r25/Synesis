@@ -5,10 +5,10 @@ export const esc = (value) => String(value).replace(/&/g, "&amp;").replace(/</g,
 export const isMobile = () => matchMedia("(max-width: 768px)").matches;
 
 let toastTimer;
-export function toast(message) {
+export function toast(message, type = "", duration = type === "error" ? 4200 : 2600) {
   const element = $("#toast");
   element.textContent = message;
-  element.classList.add("show");
+  element.className = type ? `show ${type}` : "show";
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => element.classList.remove("show"), 2600);
+  toastTimer = setTimeout(() => { element.className = ""; }, duration);
 }

@@ -66,6 +66,11 @@ function formatCost(cost) {
   return `$${n.toFixed(4)}`;
 }
 
+function apiErrorMessage(error) {
+  const message = String(error?.message || "Unknown API error").trim();
+  return /failed to fetch|networkerror|load failed/i.test(message) ? "Could not reach the API endpoint" : message;
+}
+
 function statsText(usage) {
   if (!usage) return "";
   const parts = [];
@@ -231,8 +236,9 @@ async function generateAssistant(conversation) {
     }
   } catch (error) {
     if (error.name !== "AbortError") {
-      bubble.innerHTML = assistantHTML(assistant) + `<p class="err">${esc(error.message)}</p>`;
-      highlightCode(bubble);
+      const index = conversation.messages.indexOf(assistant);
+      if (index !== -1) conversation.messages.splice(index, 1);
+      toast(apiErrorMessage(error), "error");
     }
   } finally {
     if (usageStats) assistant.usage = usageStats;
