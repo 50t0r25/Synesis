@@ -8,6 +8,17 @@ const input = $("#input");
 const sendButton = $("#sendBtn");
 let menuConversationId = null;
 let providerRequestId = 0;
+const reasoningPrefs = new WeakMap();
+const segmentFrozenUntil = new WeakMap();
+const segmentText = new WeakMap();
+const stream = {
+  bubble: null,
+  message: null,
+  timer: null,
+  lastPaint: 0,
+  reasoning: "",
+  thinking: null,
+};
 
 function conversationIdFromURL() {
   return new URLSearchParams(location.search).get("chat");
@@ -27,17 +38,19 @@ function openConversation(id, replace = false) {
   renderMessages();
 }
 
-function highlightCode(root = document) {
+function highlightElement(code) {
   if (!window.hljs) return;
-  root.querySelectorAll("pre code:not(.hljs)").forEach((code) => {
-    const language = code.dataset.language;
-    const result =
-      language && window.hljs.getLanguage(language)
-        ? window.hljs.highlight(code.textContent, { language })
-        : window.hljs.highlightAuto(code.textContent);
-    code.innerHTML = result.value;
-    code.classList.add("hljs");
-  });
+  const language = code.dataset.language;
+  const result =
+    language && window.hljs.getLanguage(language)
+      ? window.hljs.highlight(code.textContent, { language })
+      : window.hljs.highlightAuto(code.textContent);
+  code.innerHTML = result.value;
+  code.classList.add("hljs");
+}
+
+function highlightCode(root = document) {
+  root.querySelectorAll("pre code:not(.hljs)").forEach(highlightElement);
 }
 
 async function copyText(text) {
@@ -90,20 +103,171 @@ function statsText(usage) {
   return parts.join(" · ");
 }
 
+function reasoningHTML(message, thinking, open, body = "") {
+  const effort = message.reasoningEffort;
+  const chip =
+    !thinking && effort && effort !== "none"
+      ? `<span class="reasoning-effort">${esc(effort)}</span>`
+      : "";
+  const label = thinking ? "Thinking" : "Reasoning";
+  return `<details class="reasoning${thinking ? " live" : ""}"${open ? " open" : ""}><summary><span class="reasoning-label">${label}</span>${chip}</summary><div class="reasoning-body">${body}</div></details>`;
+}
+
 function assistantHTML(message) {
   const reasoning = visibleReasoning(message);
-  const thinking = reasoning
-    ? `<details class="reasoning"><summary>Reasoning</summary><div class="reasoning-body">${MD.render(reasoning)}</div></details>`
+  const card = reasoning
+    ? reasoningHTML(
+        message,
+        false,
+        reasoningPrefs.get(message) === true,
+        MD.render(reasoning),
+      )
     : "";
-  return thinking + MD.render(message.content);
+  return card + MD.render(message.content);
+}
+
+function scanBlocks(content) {
+  const lines = content.split("\n");
+  let cut = 0;
+  let fence = null;
+  let pos = 0;
+  lines.forEach((line, index) => {
+    const trimmed = line.trimStart();
+    const marker = /^(```+|~~~+)/.exec(trimmed)?.[1];
+    if (marker) {
+      if (!fence) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length)
+        fence = null;
+    } else if (!fence && !trimmed.trim() && index < lines.length - 1) {
+      cut = pos + line.length + 1;
+    }
+    pos += line.length + 1;
+  });
+  return { cut, inFence: !!fence };
+}
+
+function paintSegmented(container, text) {
+  let frozen = container.querySelector(":scope > .stream-frozen");
+  let tail = container.querySelector(":scope > .stream-tail");
+  if (!tail) {
+    frozen = document.createElement("div");
+    frozen.className = "stream-frozen";
+    tail = document.createElement("div");
+    tail.className = "stream-tail";
+    container.append(frozen, tail);
+  }
+  if (segmentText.get(container) === text) return tail;
+  segmentText.set(container, text);
+  const { cut, inFence } = scanBlocks(text);
+  let frozenUntil = segmentFrozenUntil.get(container) ?? 0;
+  if (cut < frozenUntil) {
+    frozenUntil = 0;
+    frozen.innerHTML = "";
+  }
+  if (cut > frozenUntil) {
+    frozen.insertAdjacentHTML(
+      "beforeend",
+      MD.render(text.slice(frozenUntil, cut)),
+    );
+    highlightCode(frozen);
+    segmentFrozenUntil.set(container, cut);
+    frozenUntil = cut;
+  }
+  tail.innerHTML = MD.render(text.slice(frozenUntil));
+  const codes = [...tail.querySelectorAll("pre code")];
+  codes.forEach((code, index) => {
+    if (inFence && index === codes.length - 1) return;
+    highlightElement(code);
+  });
+  return tail;
+}
+
+function lastCaretHost(root) {
+  const last = [...root.children].at(-1);
+  if (!last) return null;
+  return [...last.querySelectorAll("li, p, pre code, td")].at(-1) || last;
+}
+
+function appendCaret(scope, fallback) {
+  const caret = document.createElement("span");
+  caret.className = "caret";
+  const host =
+    lastCaretHost(scope) || (fallback && lastCaretHost(fallback)) || scope;
+  host.append(caret);
+}
+
+function resetStream() {
+  clearTimeout(stream.timer);
+  stream.timer = null;
+  stream.bubble = null;
+  stream.message = null;
+  stream.lastPaint = 0;
+  stream.reasoning = "";
+  stream.thinking = null;
 }
 
 function updateAssistantBubble(bubble, message) {
-  const wasOpen = bubble.querySelector(".reasoning")?.open;
-  bubble.innerHTML = assistantHTML(message);
-  if (wasOpen && bubble.querySelector(".reasoning"))
-    bubble.querySelector(".reasoning").open = true;
-  highlightCode(bubble);
+  stream.bubble = bubble;
+  stream.message = message;
+  if (stream.timer) return;
+  const tail = bubble.querySelector(":scope > .stream-tail");
+  const pending = tail
+    ? message.content.length - (segmentFrozenUntil.get(bubble) ?? 0)
+    : message.content.length;
+  const interval = Math.min(400, Math.max(90, pending / 25));
+  const delay = Math.max(
+    0,
+    interval - (performance.now() - stream.lastPaint),
+  );
+  stream.timer = setTimeout(paintStreamBubble, delay);
+}
+
+function paintStreamBubble() {
+  stream.timer = null;
+  const { bubble, message } = stream;
+  if (!bubble || !message || !bubble.isConnected) return;
+  stream.lastPaint = performance.now();
+  const thinking = !message.content.trim();
+  const reasoning = visibleReasoning(message);
+  let details = bubble.querySelector(":scope > .reasoning");
+  if (reasoning) {
+    if (!details) {
+      const open = reasoningPrefs.get(message) === true;
+      bubble.insertAdjacentHTML(
+        "afterbegin",
+        reasoningHTML(message, thinking, open),
+      );
+      details = bubble.querySelector(":scope > .reasoning");
+      stream.thinking = thinking;
+      stream.reasoning = "";
+    }
+    if (thinking !== stream.thinking) {
+      details.classList.toggle("live", thinking);
+      const effort = message.reasoningEffort;
+      const chip =
+        !thinking && effort && effort !== "none"
+          ? `<span class="reasoning-effort">${esc(effort)}</span>`
+          : "";
+      details.querySelector("summary").innerHTML =
+        `<span class="reasoning-label">${thinking ? "Thinking" : "Reasoning"}</span>${chip}`;
+      stream.thinking = thinking;
+    }
+    if (reasoning !== stream.reasoning) {
+      const body = details.querySelector(".reasoning-body");
+      const stick =
+        body.scrollHeight - body.scrollTop - body.clientHeight < 24;
+      const scrollTop = body.scrollTop;
+      paintSegmented(body, reasoning);
+      body.scrollTop = stick ? body.scrollHeight : scrollTop;
+      stream.reasoning = reasoning;
+    }
+  } else if (details) {
+    details.remove();
+  }
+  const tail = paintSegmented(bubble, message.content);
+  if (!thinking || !reasoning)
+    appendCaret(tail, bubble.querySelector(":scope > .stream-frozen"));
+  scrollBottom();
 }
 
 function appendReasoningDetails(target, chunks) {
@@ -272,6 +436,7 @@ async function sendMessage() {
 }
 
 async function generateAssistant(conversation) {
+  const effortUsed = Settings.data.reasoningEffort;
   const assistant = {
     role: "assistant",
     content: "",
@@ -282,7 +447,7 @@ async function generateAssistant(conversation) {
   renderSidebar();
   renderMessages();
   const bubble = $("#messages").lastElementChild.querySelector(".bubble");
-  bubble.classList.add("typing");
+  resetStream();
   setStreaming(true);
   State.abort = new AbortController();
   let usageStats = null;
@@ -316,8 +481,12 @@ async function generateAssistant(conversation) {
         assistant.reasoningDetails,
         delta.reasoningDetails,
       );
+      if (
+        !assistant.reasoningEffort &&
+        (assistant.reasoning || assistant.reasoningDetails.length)
+      )
+        assistant.reasoningEffort = effortUsed;
       updateAssistantBubble(bubble, assistant);
-      scrollBottom();
     }
   } catch (error) {
     if (error.name !== "AbortError") {
@@ -327,7 +496,7 @@ async function generateAssistant(conversation) {
     }
   } finally {
     if (usageStats) assistant.usage = usageStats;
-    bubble.classList.remove("typing");
+    resetStream();
     setStreaming(false);
     State.abort = null;
     renderMessages();
@@ -620,6 +789,24 @@ $("#messages").addEventListener("click", async (event) => {
     );
   }
 });
+
+$("#messages").addEventListener(
+  "toggle",
+  (event) => {
+    const details = event.target;
+    if (!details.classList?.contains("reasoning") || !details.isConnected)
+      return;
+    const index = Number(details.closest(".msg")?.dataset.index);
+    const message = State.active()?.messages[index];
+    if (message) reasoningPrefs.set(message, details.open);
+    if (details.open)
+      details.querySelector(".reasoning-body")?.animate(
+        [{ opacity: 0 }, { opacity: 1 }],
+        { duration: 180, easing: "ease" },
+      );
+  },
+  true,
+);
 
 $("#menu").addEventListener("click", async (event) => {
   const conversation = State.conversations.find(
